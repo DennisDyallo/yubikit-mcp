@@ -64,6 +64,26 @@ Or manually configure `~/Library/Application Support/Claude/claude_desktop_confi
 uv run server.py
 ```
 
+### VS Code Integration (with GitHub Copilot)
+
+The project includes `.vscode/mcp.json` for VS Code integration. To use:
+
+1. **Prerequisites:**
+   - VS Code 1.102+ with GitHub Copilot installed
+   - MCP support is built-in (no extensions needed)
+
+2. **Enable in VS Code:**
+   - Open Chat view (Ctrl+Shift+I / Cmd+Shift+I)
+   - Enable Agent mode
+
+3. **Use YubiKey tools in chat:**
+   ```
+   @workspace Can you list my connected YubiKeys?
+   @workspace Check YubiKey status
+   ```
+
+The MCP server starts automatically when Copilot needs the tools.
+
 ## Testing in Claude Desktop
 
 Once installed, try these prompts:
