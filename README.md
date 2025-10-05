@@ -30,6 +30,40 @@ Just like USB lets you plug any device into any computer, MCP lets you plug any 
 2. **Resources** - Data the AI can read (e.g., available certificates, device info)
 3. **Prompts** - Pre-built templates for common workflows
 
+### Why Use MCP Instead of Direct CLI Access?
+
+**Good question!** AI agents *could* technically use `ykman` commands directly. Here's why MCP is better:
+
+#### Without MCP (Direct CLI)
+```bash
+# AI must figure out commands, parse text output, handle errors
+ykman list
+ykman --device 12345 oath accounts code "GitHub:user"
+```
+
+**Problems:**
+- ❌ **No security** - Agent has full shell access (can run ANY command)
+- ❌ **No discoverability** - Agent doesn't know what operations are available
+- ❌ **Error-prone** - Must parse text output, guess command syntax
+- ❌ **Platform-specific** - Different implementation for each AI tool
+
+#### With MCP
+```python
+# AI discovers and calls structured functions
+list_yubikeys() → {"status": "success", "devices": [...]}
+generate_otp(service="GitHub", account="user") → {"code": "123456"}
+```
+
+**Benefits:**
+- ✅ **Security & Sandboxing** - Agent can ONLY do what you explicitly allow
+- ✅ **Discoverability** - AI automatically sees available tools and their parameters
+- ✅ **Structured Data** - JSON responses instead of parsing text
+- ✅ **Workflow Consolidation** - One tool = complete workflow (e.g., `sign_document` handles cert selection → signing → verification)
+- ✅ **Platform Independence** - Same tools work in Claude Code, VS Code, Rider, web apps
+- ✅ **Context Awareness** - Resources show what YOUR YubiKey can do before running commands
+
+**Real-world analogy:** MCP is like providing a REST API with documented endpoints, versus giving root shell access and saying "figure it out." Both can accomplish tasks, but MCP is safer, clearer, and easier to use correctly.
+
 ## Quick Start
 
 ### Prerequisites
