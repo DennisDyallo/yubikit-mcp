@@ -1,0 +1,14 @@
+{
+  "servers": {
+    "yubikey-hello-world": {
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/dyallo/Code/y/yubikit-mcp/src/hello-world",
+        "run",
+        "server.py"
+      ]
+    }
+  }
+}

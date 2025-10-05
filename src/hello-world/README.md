@@ -64,6 +64,21 @@ Or manually configure `~/Library/Application Support/Claude/claude_desktop_confi
 uv run server.py
 ```
 
+## MCP Client Integration
+
+This project includes multiple MCP configuration files for different platforms:
+
+- **`.mcp.json`** (project root) → **Claude Code** - Works with this CLI tool
+- **`.vscode/mcp.json`** → **VS Code + GitHub Copilot** - For VS Code Agent mode
+- **Rider/JetBrains** → Manual configuration via IDE settings UI
+
+### Claude Code Integration
+
+The project includes `.mcp.json` for Claude Code. After reloading Claude Code, ask:
+```
+Can you list my connected YubiKeys?
+```
+
 ### VS Code Integration (with GitHub Copilot)
 
 The project includes `.vscode/mcp.json` for VS Code integration. To use:
