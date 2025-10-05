@@ -2,9 +2,13 @@
 
 > Bringing hardware-backed cryptographic security to AI agents through the Model Context Protocol
 
+**Status:** 🚧 Early Development - Hello World Implementation Complete
+
+---
+
 ## What is This?
 
-This project provides an **MCP (Model Context Protocol) server** that lets AI assistants interact with YubiKey hardware security tokens. Think of it as a bridge between AI tools (like Claude, GitHub Copilot, or any MCP-compatible client) and your YubiKey device.
+An **MCP (Model Context Protocol) server** that lets AI assistants interact with YubiKey hardware security tokens. Think of it as a bridge between AI tools (like Claude, GitHub Copilot, or any MCP-compatible client) and your YubiKey device.
 
 ### The 30-Second Overview
 
@@ -17,6 +21,8 @@ This project provides an **MCP (Model Context Protocol) server** that lets AI as
 - AI assistants can list connected YubiKeys
 - Future: AI can help you sign documents, generate OTPs, manage certificates
 - Your YubiKey becomes accessible to AI workflows while maintaining hardware security
+
+---
 
 ## What is MCP?
 
@@ -63,6 +69,8 @@ generate_otp(service="GitHub", account="user") → {"code": "123456"}
 - ✅ **Context Awareness** - Resources show what YOUR YubiKey can do before running commands
 
 **Real-world analogy:** MCP is like providing a REST API with documented endpoints, versus giving root shell access and saying "figure it out." Both can accomplish tasks, but MCP is safer, clearer, and easier to use correctly.
+
+---
 
 ## Quick Start
 
@@ -141,6 +149,8 @@ Go to: `Settings → Tools → AI Assistant → Model Context Protocol (MCP)` an
 
 **See [`.vscode/Interesting file paths.md`](.vscode/Interesting%20file%20paths.md) for detailed config locations.**
 
+---
+
 ## How It Works
 
 ### Architecture Overview
@@ -183,6 +193,8 @@ The AI will use the MCP server to execute the command and respond with:
 }
 ```
 
+---
+
 ## Project Structure
 
 ```
@@ -192,13 +204,17 @@ yubikit-mcp/
 │   ├── mcp.json                 # VS Code/Copilot MCP config
 │   └── Interesting file paths.md # Config reference guide
 ├── src/
-│   └── hello-world/
-│       ├── server.py            # MCP server implementation
-│       ├── pyproject.toml       # Python dependencies
-│       └── README.md            # Detailed usage guide
+│   ├── hello-world/
+│   │   ├── server.py            # MCP server implementation
+│   │   ├── pyproject.toml       # Python dependencies
+│   │   └── README.md            # Detailed usage guide
+│   └── mcp-store/               # Separate project: MCP Marketplace
+│       └── README.md            # See marketplace docs
 ├── CLAUDE.md                    # Developer guide for AI assistants
 └── README.md                    # This file
 ```
+
+---
 
 ## Technical Deep Dive
 
@@ -246,9 +262,9 @@ else:
 - **Hardware binding:** Use YubiKey attestation to bind operations to specific devices
 - **Audit logging:** Track all security operations
 
-## Roadmap & Future Tools
+---
 
-Based on [`PLAN_AND_RESOURCES.md`](PLAN_AND_RESOURCES.md), planned tool categories:
+## Roadmap & Future Tools
 
 ### 1. Identity & Authentication
 - `authenticate_to_service` - Use PIV for API authentication
@@ -275,6 +291,8 @@ Based on [`PLAN_AND_RESOURCES.md`](PLAN_AND_RESOURCES.md), planned tool categori
 - `rotate_expiring_credentials` - Automated cert rotation
 - `audit_credential_usage` - Compliance tracking
 
+---
+
 ## YubiKey Protocol Support
 
 This project can support all YubiKey capabilities:
@@ -285,13 +303,25 @@ This project can support all YubiKey capabilities:
 - **FIDO2/WebAuthn** - Passwordless authentication
 - **YubiOTP** - Challenge-response, static passwords
 
+---
+
+## Related Projects
+
+This repository also contains **[MCP Marketplace](src/mcp-store/README.md)** - a discovery and monetization platform for MCPB extensions (like this YubiKey MCP server).
+
+The YubiKey MCP server could be packaged as a `.mcpb` bundle and published to the marketplace for wider distribution.
+
+---
+
 ## Resources & Documentation
 
 - **[MCP Documentation](https://modelcontextprotocol.io/)** - Official MCP protocol docs
-- **[FastMCP Python SDK](https://github.com/anthropics/anthropic-mcp-python)** - Framework used in this project
+- **[FastMCP Python SDK](https://github.com/jlowin/fastmcp)** - Framework used in this project
 - **[yubikey-manager](https://github.com/Yubico/yubikey-manager)** - Backend CLI tool
 - **[CLAUDE.md](CLAUDE.md)** - Developer guide for Claude Code contributors
 - **[src/hello-world/README.md](src/hello-world/README.md)** - Detailed usage and troubleshooting
+
+---
 
 ## Contributing
 
@@ -301,6 +331,8 @@ This is an early-stage project! Contributions welcome:
 2. **Improve security** - Add authentication, audit logging
 3. **Support more protocols** - PIV, OATH, FIDO2 workflows
 4. **Documentation** - Improve guides and examples
+
+---
 
 ## License
 
@@ -314,6 +346,6 @@ This is an early-stage project! Contributions welcome:
 
 ---
 
-**Status:** 🚧 Early Development - Hello World Implementation Complete
+**Built with ❤️ using the Model Context Protocol**
 
-Built with ❤️ using the Model Context Protocol
+*Bringing hardware-backed security to AI agent workflows*
