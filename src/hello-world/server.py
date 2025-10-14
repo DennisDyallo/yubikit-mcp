@@ -60,6 +60,89 @@ async def list_yubikeys() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_yubikey_info(serial_number: int | None = None) -> dict[str, Any]:
+    """Get detailed information about a specific YubiKey.
+
+    Retrieves comprehensive information including firmware version, form factor,
+    enabled applications (OTP, FIDO, CCID), and USB interfaces.
+
+    Args:
+        serial_number: The serial number of the YubiKey to query. If not provided
+                      and only one YubiKey is connected, that device will be used.
+                      If multiple devices are connected, serial_number is required.
+
+    Returns:
+        A dictionary containing:
+            - status: "success", "error", or "no_devices"
+            - message: Human-readable status message
+            - info: Detailed device information (if successful)
+            - serial_number: The serial number of the queried device (if successful)
+    """
+    try:
+        # Build command arguments
+        cmd = ["ykman"]
+
+        if serial_number is not None:
+            cmd.extend(["--device", str(serial_number)])
+
+        cmd.append("info")
+
+        # Run ykman info command
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        info_text = result.stdout.strip()
+
+        if not info_text:
+            return {
+                "status": "no_devices",
+                "message": "No YubiKey information returned",
+                "info": None
+            }
+
+        return {
+            "status": "success",
+            "message": "Successfully retrieved YubiKey information",
+            "info": info_text,
+            "serial_number": serial_number
+        }
+
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.strip() if e.stderr else str(e)
+
+        # Handle specific error cases
+        if "multiple devices" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "Multiple YubiKeys detected. Please specify a serial_number.",
+                "info": None
+            }
+        elif "no device found" in error_msg.lower() or "failed connecting" in error_msg.lower():
+            return {
+                "status": "no_devices",
+                "message": f"No YubiKey found{f' with serial number {serial_number}' if serial_number else ''}",
+                "info": None
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Error running ykman: {error_msg}",
+                "info": None
+            }
+
+    except FileNotFoundError:
+        return {
+            "status": "error",
+            "message": "ykman not found. Please install yubikey-manager",
+            "info": None
+        }
+
+
+@mcp.tool()
 async def hello_yubikey() -> str:
     """Say hello and check YubiKey availability."""
     try:
