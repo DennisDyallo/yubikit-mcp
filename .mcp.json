@@ -1,12 +1,21 @@
 {
   "mcpServers": {
-    "yubikey-hello-world": {
+    "yubikey-server": {
       "command": "uv",
       "args": [
         "--directory",
         "/home/dyallo/Code/y/yubikit-mcp/src/hello-world",
         "run",
         "server.py"
+      ]
+    },
+    "hello-world": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/dyallo/Code/y/yubikit-mcp/src/hello-world",
+        "run",
+        "hello-world.py"
       ]
     }
   }
