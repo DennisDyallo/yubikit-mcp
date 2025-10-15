@@ -17,10 +17,11 @@ mcp = FastMCP("yubikey-hello-world")
 ResponseStatus = Literal["success", "error", "no_devices"]
 
 
-class SerialSchema(BaseModel):
-    """Schema for eliciting user input."""
-    serial_number: int = Field(
-        description="The serial number of the YubiKey"
+class DeviceSelectionSchema(BaseModel):
+    """Schema for eliciting device selection from user."""
+    device_number: int = Field(
+        description="The number of the YubiKey to select from the list (e.g., 1, 2, 3)",
+        ge=1
     )
 
 
@@ -72,22 +73,53 @@ def build_response(
     }
 
 
-async def prompt_for_serial(ctx: Context) -> int | None:
-    """Prompt the user to provide a YubiKey serial number.
+async def prompt_for_device_selection(ctx: Context) -> int | None:
+    """Prompt the user to select a YubiKey from a numbered list.
 
     Args:
         ctx: MCP context for eliciting user input
 
     Returns:
-        Serial number if user provides one, None if cancelled
+        Serial number of selected device, or None if cancelled/error
     """
-    elicit_result = await ctx.elicit(
-        message="Multiple YubiKeys detected. Please provide the serial number of the YubiKey you want to query.",
-        schema=SerialSchema
-    )
-    if elicit_result.action == "accept" and elicit_result.data:
-        return elicit_result.data.serial_number
-    return None
+    try:
+        # Get list of connected devices
+        result = run_ykman_command(["list"])
+        devices = [line for line in result.stdout.strip().split('\n') if line]
+
+        if not devices:
+            await ctx.info("No YubiKeys detected")
+            return None
+
+        # Build numbered list message
+        device_list = "\n".join([f"{i+1}. {device}" for i, device in enumerate(devices)])
+        message = f"Multiple YubiKeys detected. Please select one:\n\n{device_list}\n\nEnter the number of the device you want to use:\n"
+
+        # Prompt user for selection
+        elicit_result = await ctx.elicit(
+            message=message,
+            schema=DeviceSelectionSchema
+        )
+
+        if elicit_result.action == "accept" and elicit_result.data:
+            selected_index = elicit_result.data.device_number - 1
+
+            # Validate selection
+            if 0 <= selected_index < len(devices):
+                # Extract serial number from device string
+                # Format: "YubiKey 5 NFC (5.2.7) [OTP+FIDO+CCID] Serial: 16021303"
+                device_str = devices[selected_index]
+                serial_str = device_str.split("Serial: ")[-1].strip()
+                return int(serial_str)
+            else:
+                await ctx.info(f"Invalid selection: {elicit_result.data.device_number}")
+                return None
+
+        return None
+
+    except (subprocess.CalledProcessError, ValueError, IndexError) as e:
+        await ctx.info(f"Error listing devices: {e}")
+        return None
 
 
 def get_ykman_info(serial_number: int | None = None) -> str:
@@ -223,12 +255,12 @@ async def get_yubikey_info(
 
         # Handle multiple devices case
         if "multiple yubikeys" in error_msg.lower():
-            serial_number = await prompt_for_serial(ctx)
+            serial_number = await prompt_for_device_selection(ctx)
 
             if serial_number is None:
                 return build_response(
                     "error",
-                    "Operation cancelled or no serial number provided.",
+                    "Operation cancelled or no device selected.",
                     info=None
                 )
 
