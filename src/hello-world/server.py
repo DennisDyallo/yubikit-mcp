@@ -7,13 +7,19 @@ A basic MCP server that lists connected YubiKeys.
 import subprocess
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, Field
+from mcp.server.fastmcp import FastMCP, Context
 
 # Initialize FastMCP server
 mcp = FastMCP("yubikey-hello-world")
 
+class SerialSchema(BaseModel):
+    """Schema for eliciting user input."""
+    serial_number: int = Field(
+        description="The serial number of the YubiKey"
+    )
 
-@mcp.tool()
+# @mcp.tool()
 async def list_yubikeys() -> dict[str, Any]:
     """List all connected YubiKeys with their details."""
     try:
@@ -59,8 +65,34 @@ async def list_yubikeys() -> dict[str, Any]:
         }
 
 
+async def prompt_for_serial(ctx: Context) -> int | None:
+    """Prompt the user to provide a YubiKey serial number."""
+    elicit_result = await ctx.elicit(
+        message="Multiple YubiKeys detected. Please provide the serial number of the YubiKey you want to query.",
+        schema=SerialSchema
+    )
+    if elicit_result.action == "accept" and elicit_result.data:
+        return elicit_result.data.serial_number
+    return None
+
+
+async def call_ykman_info(serial_number: int | None = None) -> dict[str, Any]:
+    """Call ykman info command and return parsed output."""
+    cmd = ["ykman"]
+    if serial_number is not None:
+        cmd.extend(["--device", str(serial_number)])
+    cmd.append("info")
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    return result.stdout.strip()
+
 @mcp.tool()
-async def get_yubikey_info(serial_number: int | None = None) -> dict[str, Any]:
+async def get_yubikey_info(ctx: Context, serial_number: int | None = None, ) -> dict[str, Any]:
     """Get detailed information about a specific YubiKey.
 
     Retrieves comprehensive information including firmware version, form factor,
@@ -79,24 +111,8 @@ async def get_yubikey_info(serial_number: int | None = None) -> dict[str, Any]:
             - serial_number: The serial number of the queried device (if successful)
     """
     try:
-        # Build command arguments
-        cmd = ["ykman"]
 
-        if serial_number is not None:
-            cmd.extend(["--device", str(serial_number)])
-
-        cmd.append("info")
-
-        # Run ykman info command
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-
-        info_text = result.stdout.strip()
-
+        info_text = await call_ykman_info(serial_number=serial_number)
         if not info_text:
             return {
                 "status": "no_devices",
@@ -114,12 +130,21 @@ async def get_yubikey_info(serial_number: int | None = None) -> dict[str, Any]:
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.strip() if e.stderr else str(e)
 
-        # Handle specific error cases
-        if "multiple devices" in error_msg.lower():
+        if "multiple yubikeys" in error_msg.lower():
+            serial_number = await prompt_for_serial(ctx)
+            if serial_number is not None:
+                info_text = await call_ykman_info(serial_number=serial_number)
+            else:
+                return {
+                    "status": "error",
+                    "message": "Operation cancelled or no serial number provided.",
+                    "info": None
+                }
             return {
-                "status": "error",
-                "message": "Multiple YubiKeys detected. Please specify a serial_number.",
-                "info": None
+                "status": "success",
+                "message": "Successfully retrieved YubiKey information",
+                "info": info_text,
+                "serial_number": serial_number
             }
         elif "no device found" in error_msg.lower() or "failed connecting" in error_msg.lower():
             return {
@@ -130,7 +155,7 @@ async def get_yubikey_info(serial_number: int | None = None) -> dict[str, Any]:
         else:
             return {
                 "status": "error",
-                "message": f"Error running ykman: {error_msg}",
+                "message": f"ERROR running ykman: {error_msg}",
                 "info": None
             }
 
