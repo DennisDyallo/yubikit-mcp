@@ -54,6 +54,7 @@ def run_ykman_command(args: list[str]) -> subprocess.CompletedProcess:
 def build_response(
     status: ResponseStatus,
     message: str,
+    suggested_next_action: str | None = None,
     **extra_fields: Any
 ) -> dict[str, Any]:
     """Build a standardized response dictionary.
@@ -61,16 +62,22 @@ def build_response(
     Args:
         status: Response status code
         message: Human-readable message
+        suggested_next_action: Optional suggestion for what the user should do next
         **extra_fields: Additional fields to include in response
 
     Returns:
-        Response dictionary with status, message, and any extra fields
+        Response dictionary with status, message, optional suggestion, and any extra fields
     """
-    return {
+    response = {
         "status": status,
         "message": message,
-        **extra_fields
     }
+
+    if suggested_next_action:
+        response["suggested_next_action"] = suggested_next_action
+
+    response.update(extra_fields)
+    return response
 
 
 async def prompt_for_device_selection(ctx: Context) -> int | None:
@@ -190,40 +197,24 @@ async def run_ykman_with_device_selection(
         raise new_error
 
 
-def handle_ykman_error(error_msg: str, serial_number: int | None = None) -> dict[str, Any]:
-    """Parse ykman error and return appropriate response.
-
-    Args:
-        error_msg: Error message from ykman stderr
-        serial_number: Optional serial number that was queried
-
-    Returns:
-        Error response dictionary
-    """
-    error_lower = error_msg.lower()
-
-    if "no device found" in error_lower or "failed connecting" in error_lower:
-        serial_suffix = f" with serial number {serial_number}" if serial_number else ""
-        return build_response(
-            "no_devices",
-            f"No YubiKey found{serial_suffix}",
-            info=None
-        )
-
-    return build_response(
-        "error",
-        f"ERROR running ykman: {error_msg}",
-        info=None
-    )
-
-
 # ============================================================================
 # MCP Tools
 # ============================================================================
 
-# @mcp.tool()
+@mcp.tool()
 async def list_yubikeys() -> dict[str, Any]:
-    """List all connected YubiKeys with their details."""
+    """List all connected YubiKeys with their details.
+
+    Returns information about all YubiKeys currently connected to the system,
+    including their model, firmware version, serial number, and enabled applications.
+
+    Returns:
+        A dictionary containing:
+            - status: "success", "error", or "no_devices"
+            - message: Human-readable status message
+            - devices: List of device strings with full details (if successful)
+            - count: Number of devices found (if successful)
+    """
     try:
         result = run_ykman_command(["list"])
 
@@ -234,19 +225,23 @@ async def list_yubikeys() -> dict[str, Any]:
             return build_response(
                 "no_devices",
                 "No YubiKeys detected",
-                devices=[]
+                devices=[],
+                count=0
             )
 
         return build_response(
             "success",
             f"Found {len(devices)} YubiKey(s)",
-            devices=devices
+            suggested_next_action="Use 'get_yubikey_info' to see detailed information about a specific device, or 'list_yubikey_applications' to view application status",
+            devices=devices,
+            count=len(devices)
         )
 
     except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.strip() if e.stderr else str(e)
         return build_response(
             "error",
-            f"Error running ykman: {e.stderr}",
+            f"Error running ykman: {error_msg}",
             devices=[]
         )
     except FileNotFoundError:
@@ -293,28 +288,16 @@ async def get_yubikey_info(
         return build_response(
             "success",
             "Successfully retrieved YubiKey information",
+            suggested_next_action="Use 'list_yubikey_applications' to see application status, or 'configure_yubikey_applications' to enable/disable applications",
             info=info_text,
             serial_number=serial_number
         )
 
-    except ValueError as e:
-        # User cancelled device selection
-        return build_response(
-            "error",
-            str(e),
-            info=None
-        )
-
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.strip() if e.stderr else str(e)
-        return handle_ykman_error(error_msg, serial_number)
-
-    except FileNotFoundError:
-        return build_response(
-            "error",
-            "ykman not found. Please install yubikey-manager",
-            info=None
-        )
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
+        # ValueError: User cancelled device selection
+        # CalledProcessError: Command failed (already enhanced with full command by wrapper)
+        # FileNotFoundError: ykman not installed
+        return build_response("error", str(e), info=None)
 
 
 @mcp.tool()
@@ -407,24 +390,92 @@ async def configure_yubikey_applications(
         return build_response(
             "success",
             f"Successfully {action_msg} over {transport.upper()}",
+            suggested_next_action="Use 'list_yubikey_applications' to verify the configuration changes took effect",
             output=result.stdout.strip() if result.stdout else None
         )
 
-    except ValueError as e:
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
         return build_response("error", str(e))
 
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.strip() if e.stderr else str(e)
-        return build_response("error", f"Error configuring YubiKey: {error_msg}")
 
-    except FileNotFoundError:
+@mcp.tool()
+async def list_yubikey_applications(
+    ctx: Context,
+    serial_number: int | None = None
+) -> dict[str, Any]:
+    """List the enabled/disabled status of all applications on a YubiKey.
+
+    This tool shows which applications are currently enabled over USB and NFC transports.
+
+    Args:
+        serial_number: Optional serial number of the YubiKey to query. If not provided
+                      and only one YubiKey is connected, that device will be used.
+
+    Returns:
+        A dictionary containing:
+            - status: "success", "error", or "no_devices"
+            - message: Human-readable status message
+            - applications: Dict with USB and NFC application status (if successful)
+            - serial_number: The serial number of the queried device (if successful)
+    """
+    try:
+        result = await run_ykman_with_device_selection(ctx, ["info"], serial_number)
+        info_text = result.stdout.strip()
+
+        if not info_text:
+            return build_response(
+                "no_devices",
+                "No YubiKey information returned",
+                applications=None
+            )
+
+        # Parse the info output to extract application status
+        # The info output contains a table like:
+        # Applications    USB             NFC
+        # Yubico OTP      Enabled         Enabled
+        # FIDO U2F        Enabled         Enabled
+        # ...
+
+        applications = {"usb": {}, "nfc": {}}
+        in_app_section = False
+
+        for line in info_text.split('\n'):
+            line = line.strip()
+
+            # Detect the applications table header
+            if line.startswith("Applications"):
+                in_app_section = True
+                continue
+
+            # Skip empty lines
+            if not line:
+                in_app_section = False
+                continue
+
+            # Parse application status lines
+            if in_app_section and line:
+                parts = line.split()
+                if len(parts) >= 3:
+                    # Handle multi-word app names (e.g., "Yubico OTP", "FIDO U2F")
+                    # The last two parts are USB and NFC status
+                    nfc_status = parts[-1]
+                    usb_status = parts[-2]
+                    app_name = " ".join(parts[:-2])
+
+                    applications["usb"][app_name] = usb_status
+                    applications["nfc"][app_name] = nfc_status
+
         return build_response(
-            "error",
-            "ykman not found. Please install yubikey-manager"
+            "success",
+            "Successfully retrieved application status",
+            suggested_next_action="Use 'configure_yubikey_applications' to enable or disable specific applications over USB or NFC",
+            applications=applications,
+            raw_info=info_text,
+            serial_number=serial_number
         )
 
-
-
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
+        return build_response("error", str(e), applications=None)
 
 
 def main():
