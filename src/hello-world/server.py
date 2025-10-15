@@ -145,17 +145,21 @@ async def run_ykman_with_device_selection(
         CompletedProcess instance with stdout/stderr
 
     Raises:
-        subprocess.CalledProcessError: If command fails
+        subprocess.CalledProcessError: If command fails (includes full command in error)
         ValueError: If user cancels device selection or no device selected
         FileNotFoundError: If ykman is not installed
     """
-    try:
-        # Build command with serial if provided
-        full_args = []
-        if serial_number is not None:
-            full_args.extend(["--device", str(serial_number)])
-        full_args.extend(args)
+    # Build command with serial if provided
+    full_args = []
+    if serial_number is not None:
+        full_args.extend(["--device", str(serial_number)])
+    full_args.extend(args)
 
+    # Build full command string for logging/errors
+    full_command = "ykman " + " ".join(full_args)
+
+    try:
+        await ctx.info(f"Executing: {full_command}")
         return run_ykman_command(full_args)
 
     except subprocess.CalledProcessError as e:
@@ -166,15 +170,24 @@ async def run_ykman_with_device_selection(
             selected_serial = await prompt_for_device_selection(ctx)
 
             if selected_serial is None:
-                raise ValueError("Operation cancelled or no device selected")
+                raise ValueError(f"Operation cancelled or no device selected. Command was: {full_command}")
 
             # Retry with selected device (disable retry to prevent infinite loop)
             return await run_ykman_with_device_selection(
                 ctx, args, selected_serial, retry_on_multiple=False
             )
 
-        # Re-raise if not multiple devices or retry disabled
-        raise
+        # Enhance error message with full command
+        enhanced_error = f"Command failed: {full_command}\nError: {error_msg}"
+
+        # Create a new exception with enhanced message
+        new_error = subprocess.CalledProcessError(
+            e.returncode,
+            ["ykman"] + full_args,
+            output=e.output,
+            stderr=enhanced_error
+        )
+        raise new_error
 
 
 def handle_ykman_error(error_msg: str, serial_number: int | None = None) -> dict[str, Any]:
@@ -318,6 +331,100 @@ async def hello_yubikey() -> str:
         return f"Hello from YubiKey MCP Server! 🔑\n\nykman version: {version}\n\nUse 'list_yubikeys' to see connected devices."
     except FileNotFoundError:
         return "Hello from YubiKey MCP Server! ⚠️\n\nykman is not installed. Please install yubikey-manager:\n  pip install yubikey-manager"
+
+
+# ============================================================================
+# Config Tools
+# ============================================================================
+
+@mcp.tool()
+async def configure_yubikey_applications(
+    ctx: Context,
+    transport: str,
+    enable_applications: list[str] | None = None,
+    disable_applications: list[str] | None = None,
+    serial_number: int | None = None
+) -> dict[str, Any]:
+    """Enable or disable YubiKey applications over USB or NFC.
+
+    This tool allows you to control which applications are available on your YubiKey
+    over different transports (USB or NFC). Common applications: OATH, PIV, FIDO2,
+    FIDO (U2F), OTP, OpenPGP, HSMAUTH.
+
+    Args:
+        transport: Transport to configure ("usb" or "nfc")
+        enable_applications: List of applications to enable (e.g., ["OATH", "PIV", "FIDO2", "OTP", "U2F", "OPENPGP", "HSMAUTH"])
+
+        disable_applications: List of applications to disable (e.g., ["OATH", "PIV", "FIDO2", "OTP", "U2F", "OPENPGP", "HSMAUTH"])
+        serial_number: Optional serial number of the YubiKey to configure
+
+    Returns:
+        Dictionary with status and message about the configuration changes
+
+    Example:
+        # Enable OATH and PIV over NFC
+        configure_yubikey_applications(transport="nfc", enable_applications=["OATH", "PIV", "FIDO2", "OTP", "U2F", "OPENPGP", "HSMAUTH"])
+
+        # Disable OTP over USB
+        configure_yubikey_applications(transport="usb", disable_applications=["OATH", "PIV", "FIDO2", "OTP", "U2F", "OPENPGP", "HSMAUTH"])
+    """
+    if transport.lower() not in ["usb", "nfc"]:
+        return build_response(
+            "error",
+            f"Invalid transport: {transport}. Must be 'usb' or 'nfc'."
+        )
+
+    if not enable_applications and not disable_applications:
+        return build_response(
+            "error",
+            "Must specify at least one application to enable or disable"
+        )
+
+    try:
+        force="--force"
+        args = ["config", transport.lower()]
+
+        # Add enable flags - each app needs its own --enable flag
+        if enable_applications:
+            for app in enable_applications:
+                args.append("--enable")
+                args.append(app.upper())
+
+        # Add disable flags - each app needs its own --disable flag
+        if disable_applications:
+            for app in disable_applications:
+                args.append("--disable")
+                args.append(app.upper())
+
+        args.append(force)
+
+        result = await run_ykman_with_device_selection(ctx, args, serial_number)
+
+        enabled_msg = f"enabled {', '.join(enable_applications)}" if enable_applications else ""
+        disabled_msg = f"disabled {', '.join(disable_applications)}" if disable_applications else ""
+        action_msg = " and ".join(filter(None, [enabled_msg, disabled_msg]))
+
+        return build_response(
+            "success",
+            f"Successfully {action_msg} over {transport.upper()}",
+            output=result.stdout.strip() if result.stdout else None
+        )
+
+    except ValueError as e:
+        return build_response("error", str(e))
+
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.strip() if e.stderr else str(e)
+        return build_response("error", f"Error configuring YubiKey: {error_msg}")
+
+    except FileNotFoundError:
+        return build_response(
+            "error",
+            "ykman not found. Please install yubikey-manager"
+        )
+
+
+
 
 
 def main():
