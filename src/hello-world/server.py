@@ -587,7 +587,8 @@ async def set_openpgp_touch_policy(
         # Add admin PIN if provided
         if admin_pin:
             args.extend(["--admin-pin", admin_pin])
-
+            
+        args.append("--force")
         result = await run_ykman_with_device_selection(ctx, args, serial_number)
 
         return build_response(
@@ -659,6 +660,7 @@ async def set_openpgp_pin_retries(
         if admin_pin:
             args.extend(["--admin-pin", admin_pin])
 
+        args.append("--force")
         result = await run_ykman_with_device_selection(ctx, args, serial_number)
 
         return build_response(
