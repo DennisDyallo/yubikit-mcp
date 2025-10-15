@@ -13,9 +13,8 @@ mcp = FastMCP("hello-world")
 
 class ParamSchema(BaseModel):
     """Schema for eliciting user input."""
-    name: str | None = Field(
-        description="Your name",
-        examples=["Alice", "Bob"]
+    name: str = Field(
+        description="Your name"
     )
 
 @mcp.tool()
