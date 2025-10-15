@@ -17,6 +17,31 @@ mcp = FastMCP("yubikey-hello-world")
 ResponseStatus = Literal["success", "error", "no_devices"]
 
 
+# ============================================================================
+# Response Models
+# ============================================================================
+
+class YubiKeyResponse(BaseModel):
+    """Standardized response structure for YubiKey operations.
+
+    Attributes:
+        status: Response status code ("success", "error", or "no_devices")
+        message: Human-readable status message
+        command_executed: The ykman command that was executed (if applicable)
+        serial_number: Serial number of the YubiKey that was operated on (if applicable)
+        suggested_next_action: Optional suggestion for what the user should do next
+        data: Additional response data specific to the operation
+    """
+    status: ResponseStatus
+    message: str
+    command_executed: str | None = None
+    serial_number: int | None = None
+    suggested_next_action: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"extra": "forbid"}
+
+
 class DeviceSelectionSchema(BaseModel):
     """Schema for eliciting device selection from user."""
     device_number: int = Field(
@@ -55,29 +80,31 @@ def build_response(
     status: ResponseStatus,
     message: str,
     suggested_next_action: str | None = None,
-    **extra_fields: Any
-) -> dict[str, Any]:
-    """Build a standardized response dictionary.
+    command_executed: str | None = None,
+    serial_number: int | None = None,
+    **data_fields: Any
+) -> YubiKeyResponse:
+    """Build a standardized YubiKeyResponse dataclass.
 
     Args:
         status: Response status code
         message: Human-readable message
         suggested_next_action: Optional suggestion for what the user should do next
-        **extra_fields: Additional fields to include in response
+        command_executed: Optional command that was executed (for reference)
+        serial_number: Optional serial number of the YubiKey that was operated on
+        **data_fields: Additional data fields to include in response
 
     Returns:
-        Response dictionary with status, message, optional suggestion, and any extra fields
+        YubiKeyResponse dataclass instance
     """
-    response = {
-        "status": status,
-        "message": message,
-    }
-
-    if suggested_next_action:
-        response["suggested_next_action"] = suggested_next_action
-
-    response.update(extra_fields)
-    return response
+    return YubiKeyResponse(
+        status=status,
+        message=message,
+        command_executed=command_executed,
+        serial_number=serial_number,
+        suggested_next_action=suggested_next_action,
+        data=data_fields
+    )
 
 
 async def prompt_for_device_selection(ctx: Context) -> int | None:
@@ -134,7 +161,7 @@ async def run_ykman_with_device_selection(
     args: list[str],
     serial_number: int | None = None,
     retry_on_multiple: bool = True
-) -> subprocess.CompletedProcess:
+) -> tuple[subprocess.CompletedProcess, str, int | None]:
     """Execute a ykman command with automatic device selection on multiple devices.
 
     This wrapper handles the common pattern of:
@@ -149,7 +176,7 @@ async def run_ykman_with_device_selection(
         retry_on_multiple: Whether to prompt for device selection on multiple device error
 
     Returns:
-        CompletedProcess instance with stdout/stderr
+        Tuple of (CompletedProcess instance, command string that was executed, actual serial number used)
 
     Raises:
         subprocess.CalledProcessError: If command fails (includes full command in error)
@@ -158,16 +185,25 @@ async def run_ykman_with_device_selection(
     """
     # Build command with serial if provided
     full_args = []
+    actual_serial = serial_number  # Track the actual serial number used
+
     if serial_number is not None:
         full_args.extend(["--device", str(serial_number)])
     full_args.extend(args)
 
-    # Build full command string for logging/errors
-    full_command = "ykman " + " ".join(full_args)
+    # Build full command string for logging/errors - properly quote arguments with spaces
+    def quote_arg(arg: str) -> str:
+        """Quote an argument if it contains spaces or special characters."""
+        if ' ' in arg or any(c in arg for c in ['$', '&', '|', ';', '<', '>', '(', ')', '{', '}', '[', ']', '!', '*', '?', '"', "'"]):
+            return f'"{arg}"'
+        return arg
+
+    full_command = "ykman " + " ".join(quote_arg(arg) for arg in full_args)
 
     try:
         await ctx.info(f"Executing: {full_command}")
-        return run_ykman_command(full_args)
+        result = run_ykman_command(full_args)
+        return result, full_command, actual_serial
 
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.strip() if e.stderr else str(e)
@@ -180,6 +216,7 @@ async def run_ykman_with_device_selection(
                 raise ValueError(f"Operation cancelled or no device selected. Command was: {full_command}")
 
             # Retry with selected device (disable retry to prevent infinite loop)
+            # The recursive call will return the selected serial as the actual_serial
             return await run_ykman_with_device_selection(
                 ctx, args, selected_serial, retry_on_multiple=False
             )
@@ -202,18 +239,18 @@ async def run_ykman_with_device_selection(
 # ============================================================================
 
 @mcp.tool()
-async def list_yubikeys() -> dict[str, Any]:
+async def list_yubikeys() -> YubiKeyResponse:
     """List all connected YubiKeys with their details.
 
     Returns information about all YubiKeys currently connected to the system,
     including their model, firmware version, serial number, and enabled applications.
 
     Returns:
-        A dictionary containing:
+        YubiKeyResponse with:
             - status: "success", "error", or "no_devices"
             - message: Human-readable status message
-            - devices: List of device strings with full details (if successful)
-            - count: Number of devices found (if successful)
+            - data.devices: List of device strings with full details (if successful)
+            - data.count: Number of devices found (if successful)
     """
     try:
         result = run_ykman_command(["list"])
@@ -256,7 +293,7 @@ async def list_yubikeys() -> dict[str, Any]:
 async def get_yubikey_info(
     ctx: Context,
     serial_number: int | None = None
-) -> dict[str, Any]:
+) -> YubiKeyResponse:
     """Get detailed information about a specific YubiKey.
 
     Retrieves comprehensive information including firmware version, form factor,
@@ -268,20 +305,23 @@ async def get_yubikey_info(
                       If multiple devices are connected, serial_number is required.
 
     Returns:
-        A dictionary containing:
+        YubiKeyResponse with:
             - status: "success", "error", or "no_devices"
             - message: Human-readable status message
-            - info: Detailed device information (if successful)
+            - command_executed: The ykman command that was executed
             - serial_number: The serial number of the queried device (if successful)
+            - data.info: Detailed device information (if successful)
     """
     try:
-        result = await run_ykman_with_device_selection(ctx, ["info"], serial_number)
+        result, command, actual_serial = await run_ykman_with_device_selection(ctx, ["info"], serial_number)
         info_text = result.stdout.strip()
 
         if not info_text:
             return build_response(
                 "no_devices",
                 "No YubiKey information returned",
+                command_executed=command,
+                serial_number=actual_serial,
                 info=None
             )
 
@@ -289,8 +329,9 @@ async def get_yubikey_info(
             "success",
             "Successfully retrieved YubiKey information",
             suggested_next_action="Use 'list_yubikey_applications' to see application status, or 'configure_yubikey_applications' to enable/disable applications",
-            info=info_text,
-            serial_number=serial_number
+            command_executed=command,
+            serial_number=actual_serial,
+            info=info_text
         )
 
     except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -327,7 +368,7 @@ async def configure_yubikey_applications(
     enable_applications: list[str] | None = None,
     disable_applications: list[str] | None = None,
     serial_number: int | None = None
-) -> dict[str, Any]:
+) -> YubiKeyResponse:
     """Enable or disable YubiKey applications over USB or NFC.
 
     This tool allows you to control which applications are available on your YubiKey
@@ -381,7 +422,7 @@ async def configure_yubikey_applications(
 
         args.append(force)
 
-        result = await run_ykman_with_device_selection(ctx, args, serial_number)
+        result, command, actual_serial = await run_ykman_with_device_selection(ctx, args, serial_number)
 
         enabled_msg = f"enabled {', '.join(enable_applications)}" if enable_applications else ""
         disabled_msg = f"disabled {', '.join(disable_applications)}" if disable_applications else ""
@@ -391,6 +432,8 @@ async def configure_yubikey_applications(
             "success",
             f"Successfully {action_msg} over {transport.upper()}",
             suggested_next_action="Use 'list_yubikey_applications' to verify the configuration changes took effect",
+            command_executed=command,
+            serial_number=actual_serial,
             output=result.stdout.strip() if result.stdout else None
         )
 
@@ -402,7 +445,7 @@ async def configure_yubikey_applications(
 async def list_yubikey_applications(
     ctx: Context,
     serial_number: int | None = None
-) -> dict[str, Any]:
+) -> YubiKeyResponse:
     """List the enabled/disabled status of all applications on a YubiKey.
 
     This tool shows which applications are currently enabled over USB and NFC transports.
@@ -419,13 +462,15 @@ async def list_yubikey_applications(
             - serial_number: The serial number of the queried device (if successful)
     """
     try:
-        result = await run_ykman_with_device_selection(ctx, ["info"], serial_number)
+        result, command, actual_serial = await run_ykman_with_device_selection(ctx, ["info"], serial_number)
         info_text = result.stdout.strip()
 
         if not info_text:
             return build_response(
                 "no_devices",
                 "No YubiKey information returned",
+                command_executed=command,
+                serial_number=actual_serial,
                 applications=None
             )
 
@@ -469,9 +514,10 @@ async def list_yubikey_applications(
             "success",
             "Successfully retrieved application status",
             suggested_next_action="Use 'configure_yubikey_applications' to enable or disable specific applications over USB or NFC",
+            command_executed=command,
+            serial_number=actual_serial,
             applications=applications,
-            raw_info=info_text,
-            serial_number=serial_number
+            raw_info=info_text
         )
 
     except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -486,7 +532,7 @@ async def list_yubikey_applications(
 async def get_openpgp_info(
     ctx: Context,
     serial_number: int | None = None
-) -> dict[str, Any]:
+) -> YubiKeyResponse:
     """Get information about the OpenPGP application on a YubiKey.
 
     Shows PIN retry counters, key slot status, and configuration details
@@ -504,13 +550,15 @@ async def get_openpgp_info(
             - serial_number: The serial number of the queried device (if successful)
     """
     try:
-        result = await run_ykman_with_device_selection(ctx, ["openpgp", "info"], serial_number)
+        result, command, actual_serial = await run_ykman_with_device_selection(ctx, ["openpgp", "info"], serial_number)
         info_text = result.stdout.strip()
 
         if not info_text:
             return build_response(
                 "no_devices",
                 "No OpenPGP information returned",
+                command_executed=command,
+                serial_number=actual_serial,
                 info=None
             )
 
@@ -518,8 +566,9 @@ async def get_openpgp_info(
             "success",
             "Successfully retrieved OpenPGP application information",
             suggested_next_action="Use 'set_openpgp_touch_policy' to require touch for key operations, or 'set_openpgp_pin_retries' to configure PIN attempt limits",
-            info=info_text,
-            serial_number=serial_number
+            command_executed=command,
+            serial_number=actual_serial,
+            info=info_text
         )
 
     except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -533,7 +582,7 @@ async def set_openpgp_touch_policy(
     policy: str,
     admin_pin: str | None = None,
     serial_number: int | None = None
-) -> dict[str, Any]:
+) -> YubiKeyResponse:
     """Set touch policy for OpenPGP keys.
 
     Require physical touch to use private keys for cryptographic operations.
@@ -587,14 +636,16 @@ async def set_openpgp_touch_policy(
         # Add admin PIN if provided
         if admin_pin:
             args.extend(["--admin-pin", admin_pin])
-            
+
         args.append("--force")
-        result = await run_ykman_with_device_selection(ctx, args, serial_number)
+        result, command, actual_serial = await run_ykman_with_device_selection(ctx, args, serial_number)
 
         return build_response(
             "success",
             f"Successfully set touch policy for {key_slot.upper()} key to '{policy}'",
             suggested_next_action="Use 'get_openpgp_info' to verify the touch policy was applied correctly",
+            command_executed=command,
+            serial_number=actual_serial,
             output=result.stdout.strip() if result.stdout else None
         )
 
@@ -610,7 +661,7 @@ async def set_openpgp_pin_retries(
     admin_pin_retries: int,
     admin_pin: str | None = None,
     serial_number: int | None = None
-) -> dict[str, Any]:
+) -> YubiKeyResponse:
     """Set the number of retry attempts for OpenPGP PINs.
 
     Configure how many times a user can enter incorrect PINs before they are
@@ -661,12 +712,14 @@ async def set_openpgp_pin_retries(
             args.extend(["--admin-pin", admin_pin])
 
         args.append("--force")
-        result = await run_ykman_with_device_selection(ctx, args, serial_number)
+        result, command, actual_serial = await run_ykman_with_device_selection(ctx, args, serial_number)
 
         return build_response(
             "success",
             f"Successfully set PIN retry limits: PIN={pin_retries}, Reset Code={reset_code_retries}, Admin PIN={admin_pin_retries}",
             suggested_next_action="Use 'get_openpgp_info' to verify the retry limits were applied correctly",
+            command_executed=command,
+            serial_number=actual_serial,
             output=result.stdout.strip() if result.stdout else None
         )
 
