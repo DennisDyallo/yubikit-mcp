@@ -122,26 +122,59 @@ async def prompt_for_device_selection(ctx: Context) -> int | None:
         return None
 
 
-def get_ykman_info(serial_number: int | None = None) -> str:
-    """Call ykman info command and return output.
+async def run_ykman_with_device_selection(
+    ctx: Context,
+    args: list[str],
+    serial_number: int | None = None,
+    retry_on_multiple: bool = True
+) -> subprocess.CompletedProcess:
+    """Execute a ykman command with automatic device selection on multiple devices.
+
+    This wrapper handles the common pattern of:
+    1. Try to run command with optional serial number
+    2. If multiple devices error occurs, prompt user to select device
+    3. Retry command with selected device
 
     Args:
-        serial_number: Optional serial number to query specific device
+        ctx: MCP context for user interaction
+        args: Command arguments (e.g., ["info"], ["config", "usb", "--enable", "OATH"])
+        serial_number: Optional serial number to target specific device
+        retry_on_multiple: Whether to prompt for device selection on multiple device error
 
     Returns:
-        Raw info output from ykman
+        CompletedProcess instance with stdout/stderr
 
     Raises:
-        FileNotFoundError: If ykman is not installed
         subprocess.CalledProcessError: If command fails
+        ValueError: If user cancels device selection or no device selected
+        FileNotFoundError: If ykman is not installed
     """
-    args = []
-    if serial_number is not None:
-        args.extend(["--device", str(serial_number)])
-    args.append("info")
+    try:
+        # Build command with serial if provided
+        full_args = []
+        if serial_number is not None:
+            full_args.extend(["--device", str(serial_number)])
+        full_args.extend(args)
 
-    result = run_ykman_command(args)
-    return result.stdout.strip()
+        return run_ykman_command(full_args)
+
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.strip() if e.stderr else str(e)
+
+        # Handle multiple devices case
+        if retry_on_multiple and "multiple yubikeys" in error_msg.lower():
+            selected_serial = await prompt_for_device_selection(ctx)
+
+            if selected_serial is None:
+                raise ValueError("Operation cancelled or no device selected")
+
+            # Retry with selected device (disable retry to prevent infinite loop)
+            return await run_ykman_with_device_selection(
+                ctx, args, selected_serial, retry_on_multiple=False
+            )
+
+        # Re-raise if not multiple devices or retry disabled
+        raise
 
 
 def handle_ykman_error(error_msg: str, serial_number: int | None = None) -> dict[str, Any]:
@@ -234,7 +267,8 @@ async def get_yubikey_info(
             - serial_number: The serial number of the queried device (if successful)
     """
     try:
-        info_text = get_ykman_info(serial_number=serial_number)
+        result = await run_ykman_with_device_selection(ctx, ["info"], serial_number)
+        info_text = result.stdout.strip()
 
         if not info_text:
             return build_response(
@@ -250,34 +284,16 @@ async def get_yubikey_info(
             serial_number=serial_number
         )
 
+    except ValueError as e:
+        # User cancelled device selection
+        return build_response(
+            "error",
+            str(e),
+            info=None
+        )
+
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.strip() if e.stderr else str(e)
-
-        # Handle multiple devices case
-        if "multiple yubikeys" in error_msg.lower():
-            serial_number = await prompt_for_device_selection(ctx)
-
-            if serial_number is None:
-                return build_response(
-                    "error",
-                    "Operation cancelled or no device selected.",
-                    info=None
-                )
-
-            # Retry with serial number
-            try:
-                info_text = get_ykman_info(serial_number=serial_number)
-                return build_response(
-                    "success",
-                    "Successfully retrieved YubiKey information",
-                    info=info_text,
-                    serial_number=serial_number
-                )
-            except subprocess.CalledProcessError as retry_error:
-                retry_msg = retry_error.stderr.strip() if retry_error.stderr else str(retry_error)
-                return handle_ykman_error(retry_msg, serial_number)
-
-        # Handle other errors
         return handle_ykman_error(error_msg, serial_number)
 
     except FileNotFoundError:
