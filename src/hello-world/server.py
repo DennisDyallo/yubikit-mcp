@@ -526,6 +526,152 @@ async def get_openpgp_info(
         return build_response("error", str(e), info=None)
 
 
+@mcp.tool()
+async def set_openpgp_touch_policy(
+    ctx: Context,
+    key_slot: str,
+    policy: str,
+    admin_pin: str | None = None,
+    serial_number: int | None = None
+) -> dict[str, Any]:
+    """Set touch policy for OpenPGP keys.
+
+    Require physical touch to use private keys for cryptographic operations.
+    This adds an extra layer of security by ensuring that someone with physical
+    access to the YubiKey must actively approve each use.
+
+    Args:
+        key_slot: Key slot to configure - "sig" (signature), "enc" (encryption),
+                 "aut" (authentication), or "att" (attestation)
+        policy: Touch policy to set:
+               - "on": Touch required for each use
+               - "off": No touch required (default)
+               - "fixed": Touch required, cannot be disabled without deleting key
+               - "cached": Touch required, cached for 15s after use
+               - "cached-fixed": Touch required, cached for 15s, cannot be disabled
+        admin_pin: Admin PIN for OpenPGP (if not provided, will be prompted)
+        serial_number: Optional serial number of the YubiKey to configure
+
+    Returns:
+        Dictionary with status and message about the touch policy change
+
+    Examples:
+        # Require touch for authentication key
+        set_openpgp_touch_policy(key_slot="aut", policy="on")
+
+        # Enable cached touch for signature key (touch cached for 15s)
+        set_openpgp_touch_policy(key_slot="sig", policy="cached")
+
+        # Set fixed touch policy (cannot be undone without deleting key)
+        set_openpgp_touch_policy(key_slot="enc", policy="fixed", admin_pin="12345678")
+    """
+    # Validate key slot
+    valid_slots = ["sig", "enc", "aut", "att"]
+    if key_slot.lower() not in valid_slots:
+        return build_response(
+            "error",
+            f"Invalid key slot: {key_slot}. Must be one of: {', '.join(valid_slots)}"
+        )
+
+    # Validate policy
+    valid_policies = ["on", "off", "fixed", "cached", "cached-fixed"]
+    if policy.lower() not in valid_policies:
+        return build_response(
+            "error",
+            f"Invalid policy: {policy}. Must be one of: {', '.join(valid_policies)}"
+        )
+
+    try:
+        args = ["openpgp", "keys", "set-touch", key_slot.lower(), policy.lower(), "--force"]
+
+        # Add admin PIN if provided
+        if admin_pin:
+            args.extend(["--admin-pin", admin_pin])
+
+        result = await run_ykman_with_device_selection(ctx, args, serial_number)
+
+        return build_response(
+            "success",
+            f"Successfully set touch policy for {key_slot.upper()} key to '{policy}'",
+            suggested_next_action="Use 'get_openpgp_info' to verify the touch policy was applied correctly",
+            output=result.stdout.strip() if result.stdout else None
+        )
+
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
+        return build_response("error", str(e))
+
+
+@mcp.tool()
+async def set_openpgp_pin_retries(
+    ctx: Context,
+    pin_retries: int,
+    reset_code_retries: int,
+    admin_pin_retries: int,
+    admin_pin: str | None = None,
+    serial_number: int | None = None
+) -> dict[str, Any]:
+    """Set the number of retry attempts for OpenPGP PINs.
+
+    Configure how many times a user can enter incorrect PINs before they are
+    blocked. After the retry count is exhausted, the PIN will be blocked and
+    must be reset using the Reset Code or Admin PIN.
+
+    Args:
+        pin_retries: Number of retry attempts for the User PIN (1-127)
+        reset_code_retries: Number of retry attempts for the Reset Code (1-127)
+        admin_pin_retries: Number of retry attempts for the Admin PIN (1-127)
+        admin_pin: Current Admin PIN (if not provided, will be prompted)
+        serial_number: Optional serial number of the YubiKey to configure
+
+    Returns:
+        Dictionary with status and message about the retry configuration
+
+    Examples:
+        # Set all retry counts to 10 attempts
+        set_openpgp_pin_retries(pin_retries=10, reset_code_retries=10, admin_pin_retries=10)
+
+        # Set conservative retry limits
+        set_openpgp_pin_retries(pin_retries=3, reset_code_retries=3, admin_pin_retries=5)
+
+        # Set high retry limits for testing
+        set_openpgp_pin_retries(pin_retries=127, reset_code_retries=127, admin_pin_retries=127)
+    """
+    # Validate retry counts
+    if not (1 <= pin_retries <= 127):
+        return build_response("error", f"PIN retries must be between 1 and 127, got {pin_retries}")
+
+    if not (1 <= reset_code_retries <= 127):
+        return build_response("error", f"Reset Code retries must be between 1 and 127, got {reset_code_retries}")
+
+    if not (1 <= admin_pin_retries <= 127):
+        return build_response("error", f"Admin PIN retries must be between 1 and 127, got {admin_pin_retries}")
+
+    try:
+        args = [
+            "openpgp", "access", "set-retries",
+            str(pin_retries),
+            str(reset_code_retries),
+            str(admin_pin_retries),
+            "--force"
+        ]
+
+        # Add admin PIN if provided
+        if admin_pin:
+            args.extend(["--admin-pin", admin_pin])
+
+        result = await run_ykman_with_device_selection(ctx, args, serial_number)
+
+        return build_response(
+            "success",
+            f"Successfully set PIN retry limits: PIN={pin_retries}, Reset Code={reset_code_retries}, Admin PIN={admin_pin_retries}",
+            suggested_next_action="Use 'get_openpgp_info' to verify the retry limits were applied correctly",
+            output=result.stdout.strip() if result.stdout else None
+        )
+
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
+        return build_response("error", str(e))
+
+
 def main():
     """Run the MCP server."""
     mcp.run(transport='stdio')
