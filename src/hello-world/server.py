@@ -478,6 +478,54 @@ async def list_yubikey_applications(
         return build_response("error", str(e), applications=None)
 
 
+# ============================================================================
+# OpenPGP Tools
+# ============================================================================
+
+@mcp.tool()
+async def get_openpgp_info(
+    ctx: Context,
+    serial_number: int | None = None
+) -> dict[str, Any]:
+    """Get information about the OpenPGP application on a YubiKey.
+
+    Shows PIN retry counters, key slot status, and configuration details
+    for the OpenPGP smartcard application.
+
+    Args:
+        serial_number: Optional serial number of the YubiKey to query. If not provided
+                      and only one YubiKey is connected, that device will be used.
+
+    Returns:
+        A dictionary containing:
+            - status: "success", "error", or "no_devices"
+            - message: Human-readable status message
+            - info: OpenPGP application information (if successful)
+            - serial_number: The serial number of the queried device (if successful)
+    """
+    try:
+        result = await run_ykman_with_device_selection(ctx, ["openpgp", "info"], serial_number)
+        info_text = result.stdout.strip()
+
+        if not info_text:
+            return build_response(
+                "no_devices",
+                "No OpenPGP information returned",
+                info=None
+            )
+
+        return build_response(
+            "success",
+            "Successfully retrieved OpenPGP application information",
+            suggested_next_action="Use 'set_openpgp_touch_policy' to require touch for key operations, or 'set_openpgp_pin_retries' to configure PIN attempt limits",
+            info=info_text,
+            serial_number=serial_number
+        )
+
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
+        return build_response("error", str(e), info=None)
+
+
 def main():
     """Run the MCP server."""
     mcp.run(transport='stdio')
