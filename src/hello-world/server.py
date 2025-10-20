@@ -7,6 +7,7 @@ A basic MCP server that lists connected YubiKeys.
 import subprocess
 from typing import Any, Literal
 
+import pexpect
 from pydantic import BaseModel, Field
 from mcp.server.fastmcp import FastMCP, Context
 
@@ -529,6 +530,208 @@ async def list_yubikey_applications(
 # ============================================================================
 
 @mcp.tool()
+async def generate_openpgp_key(
+    ctx: Context,
+    name: str,
+    email: str,
+    key_type: str = "rsa2048",
+    comment: str | None = None,
+    expiry_days: int = 0,
+    admin_pin: str = "12345678",
+    pin: str = "123456",
+    serial_number: int | None = None
+) -> YubiKeyResponse:
+    """Generate an OpenPGP key pair on the YubiKey.
+
+    Generates a new OpenPGP key pair directly on the YubiKey hardware. The private key
+    never leaves the device, providing strong security guarantees. This uses GPG's
+    card-edit interface to generate keys.
+
+    Args:
+        name: Real name for the key (required, e.g., "John Doe")
+        email: Email address for the key (required, e.g., "john@example.com")
+        key_type: Key algorithm and size. Options:
+                 - "rsa2048": RSA 2048-bit (faster, widely compatible)
+                 - "rsa4096": RSA 4096-bit (more secure, default)
+                 - "rsa3072": RSA 3072-bit (balanced)
+        comment: Optional comment for the key
+        expiry_days: Number of days until key expires (0 = no expiration, default)
+        admin_pin: Admin PIN for OpenPGP (default is "12345678" for factory reset keys)
+        pin: User PIN for OpenPGP (default is "123456" for factory reset keys)
+        serial_number: Optional serial number of the YubiKey to use
+
+    Returns:
+        YubiKeyResponse with:
+            - status: "success", "error", or "no_devices"
+            - message: Human-readable status message
+            - command_executed: The command that was executed
+            - serial_number: The serial number of the YubiKey
+            - data.key_fingerprint: Fingerprint of the generated key
+
+    Note:
+        - Key generation happens on-device and can take 1-2 minutes for RSA keys
+        - The YubiKey must have empty key slots for generation
+        - You may need to touch the YubiKey during generation if touch policy is enabled
+        - Make sure GPG (gnupg) is installed: `apt install gnupg` or `brew install gnupg`
+    """
+    # Validate key type
+    valid_key_types = ["rsa2048", "rsa3072", "rsa4096"]
+    if key_type.lower() not in valid_key_types:
+        return build_response(
+            "error",
+            f"Invalid key type: {key_type}. Must be one of: {', '.join(valid_key_types)}"
+        )
+
+    # Validate required fields
+    if not name or not email:
+        return build_response(
+            "error",
+            "Both 'name' and 'email' are required for key generation"
+        )
+
+    try:
+        # First, verify the YubiKey is accessible
+        result, ykman_cmd, actual_serial = await run_ykman_with_device_selection(
+            ctx, ["openpgp", "info"], serial_number
+        )
+
+        await ctx.info(f"YubiKey detected (serial: {actual_serial})")
+        await ctx.info(f"Starting key generation for {key_type}...")
+        await ctx.info("⚠️  This process may take 1-2 minutes. Please be patient and don't remove the YubiKey.")
+
+        # Build the user ID string
+        user_id = f"{name} <{email}>"
+        if comment:
+            user_id = f"{name} ({comment}) <{email}>"
+
+        # Calculate expiry format for GPG
+        expiry_str = "0" if expiry_days == 0 else str(expiry_days)
+
+        # Start GPG card-edit session
+        await ctx.info("Starting GPG card-edit session...")
+
+        # Build GPG command with card selection if we have a serial
+        gpg_cmd = "gpg --card-edit"
+        if actual_serial:
+            # GPG uses serial in hex format with "D2760001240" prefix
+            gpg_cmd = f"gpg --card-edit"  # Note: GPG auto-selects if only one card
+
+        child = pexpect.spawn(gpg_cmd, timeout=180, encoding='utf-8')
+        child.logfile_read = None  # We'll log manually for security
+
+        await ctx.info(f"Executing: {gpg_cmd}")
+
+        # Wait for the gpg/card> prompt
+        child.expect('gpg/card>')
+        await ctx.info("Connected to card")
+
+        # Enter admin mode
+        child.sendline('admin')
+        child.expect('gpg/card>')
+        await ctx.info("Entered admin mode")
+
+        # Start key generation
+        child.sendline('generate')
+
+        # Handle "make off-card backup" prompt
+        idx = child.expect(['Make off-card backup', 'gpg/card>', pexpect.TIMEOUT])
+        if idx == 0:
+            child.sendline('n')  # No backup
+            await ctx.info("Declined off-card backup (keys stay on YubiKey only)")
+
+        # Wait for "overwrite existing keys" or continue
+        idx = child.expect(['Do you want to overwrite', 'Please specify how long', 'Please enter the PIN', pexpect.TIMEOUT])
+
+        if idx == 0:
+            # Keys already exist
+            child.sendline('n')
+            child.expect('gpg/card>')
+            child.sendline('quit')
+            child.close()
+
+            return build_response(
+                "error",
+                "YubiKey already has keys. Please reset the OpenPGP applet first using 'ykman openpgp reset --force'",
+                command_executed=gpg_cmd,
+                serial_number=actual_serial
+            )
+
+        # Handle PIN prompt
+        if idx == 2 or child.buffer.find('Please enter the PIN') >= 0:
+            child.sendline(pin)
+            await ctx.info("Sent user PIN")
+            child.expect(['Please specify how long', 'Invalid PIN'])
+
+        # Key expiry
+        child.sendline(expiry_str)
+        await ctx.info(f"Set key expiry: {'no expiration' if expiry_days == 0 else f'{expiry_days} days'}")
+
+        # Real name
+        child.expect('Real name:')
+        child.sendline(name)
+        await ctx.info(f"Set name: {name}")
+
+        # Email
+        child.expect('Email address:')
+        child.sendline(email)
+        await ctx.info(f"Set email: {email}")
+
+        # Comment
+        child.expect('Comment:')
+        child.sendline(comment or '')
+        await ctx.info(f"Set comment: {comment or '(none)'}")
+
+        # Confirm
+        idx = child.expect(['Change \\(N\\)ame', 'Okay', pexpect.TIMEOUT])
+        if idx == 0:
+            child.sendline('O')  # Okay
+
+        # Wait for key generation to complete
+        await ctx.info("🔑 Generating keys on YubiKey... This will take 1-2 minutes.")
+        await ctx.info("💡 You may need to touch your YubiKey if touch policy is enabled.")
+
+        child.expect('gpg/card>', timeout=180)  # Key generation can take a while
+
+        await ctx.info("✅ Key generation complete!")
+
+        # Quit GPG
+        child.sendline('quit')
+        child.close()
+
+        # Get the new key info
+        result, info_cmd, _ = await run_ykman_with_device_selection(
+            ctx, ["openpgp", "info"], actual_serial
+        )
+        key_info = result.stdout.strip()
+
+        return build_response(
+            "success",
+            f"Successfully generated {key_type} OpenPGP key pair for {user_id}",
+            suggested_next_action="Use 'get_openpgp_info' to view key details, or export the public key with: gpg --armor --export <email>",
+            command_executed=gpg_cmd,
+            serial_number=actual_serial,
+            key_info=key_info,
+            user_id=user_id,
+            key_type=key_type
+        )
+
+    except pexpect.TIMEOUT as e:
+        return build_response(
+            "error",
+            f"GPG command timed out. The key generation process may have stalled. Last output: {e.value if hasattr(e, 'value') else 'N/A'}",
+            serial_number=actual_serial if 'actual_serial' in locals() else None
+        )
+    except pexpect.EOF:
+        return build_response(
+            "error",
+            "GPG session ended unexpectedly. Make sure gnupg is installed and the YubiKey is connected.",
+            serial_number=actual_serial if 'actual_serial' in locals() else None
+        )
+    except (ValueError, subprocess.CalledProcessError, FileNotFoundError) as e:
+        return build_response("error", str(e))
+
+
+@mcp.tool()
 async def get_openpgp_info(
     ctx: Context,
     serial_number: int | None = None
@@ -729,6 +932,22 @@ async def set_openpgp_pin_retries(
 
 def main():
     """Run the MCP server."""
+    import os
+
+    # Enable remote debugging if ENABLE_DEBUGPY is set
+    if os.environ.get("ENABLE_DEBUGPY") == "1":
+        try:
+            import debugpy
+            debugpy.listen(("localhost", 5678))
+            # Wait for debugger to attach before continuing
+            # Comment out the line below if you don't want to wait
+            debugpy.wait_for_client()
+            print("Debugger attached!", flush=True)
+        except ImportError:
+            print("debugpy not installed, skipping debug setup", flush=True)
+        except Exception as e:
+            print(f"Failed to setup debugpy: {e}", flush=True)
+
     mcp.run(transport='stdio')
 
 

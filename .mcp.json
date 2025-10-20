@@ -1,5 +1,17 @@
 {
   "mcpServers": {
+    "yubikey-server-debug": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/home/dyallo/Code/y/yubikit-mcp/src/hello-world",
+        "run",
+        "server.py"
+      ],
+      "env": {
+        "ENABLE_DEBUGPY": "1"
+      }
+    },
     "yubikey-server": {
       "command": "uv",
       "args": [
