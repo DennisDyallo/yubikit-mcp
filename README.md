@@ -2,8 +2,6 @@
 
 > Bringing hardware-backed cryptographic security to AI agents through the Model Context Protocol
 
-**Status:** 🚧 Early Development - Hello World Implementation Complete
-
 ---
 
 ## What is This?
