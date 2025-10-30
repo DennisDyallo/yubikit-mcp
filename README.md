@@ -16,9 +16,11 @@ An **MCP (Model Context Protocol) server** that lets AI assistants interact with
 - Security operations can't be automated with AI
 
 **With this project:**
-- AI assistants can list connected YubiKeys
-- Future: AI can help you sign documents, generate OTPs, manage certificates
+- AI assistants can discover and manage your YubiKeys through natural conversation
+- Generate OpenPGP keys, configure applications, and set security policies via voice/text
+- Enable or disable NFC, require touch for operations, manage PINs - all through AI
 - Your YubiKey becomes accessible to AI workflows while maintaining hardware security
+- Future: Sign documents, manage OTPs, use PIV certificates, and more
 
 ---
 
@@ -165,30 +167,58 @@ Go to: `Settings → Tools → AI Assistant → Model Context Protocol (MCP)` an
 3. **ykman** communicates with the YubiKey hardware
 4. Results flow back through the chain to the AI
 
-### Current Implementation (Hello World)
+### Current Implementation
 
-The `src/hello-world/server.py` provides two basic tools:
+The `src/hello-world/server.py` provides a comprehensive set of tools organized by functionality:
 
+#### 🔍 Device Discovery & Information
 - **`hello_yubikey`** - Checks if ykman is installed and shows version
 - **`list_yubikeys`** - Lists all connected YubiKey devices with details
+- **`get_yubikey_info`** - Get detailed firmware version, form factor, and USB interface information
+- **`list_yubikey_applications`** - View which applications (OATH, PIV, FIDO2, etc.) are enabled over USB and NFC
+
+#### ⚙️ Device Configuration
+- **`configure_yubikey_applications`** - Enable or disable applications (OATH, PIV, FIDO2, OTP, OpenPGP, etc.) over USB or NFC transports
+
+#### 🔐 OpenPGP (Email & File Encryption)
+- **`get_openpgp_info`** - View OpenPGP application status, PIN retry counters, and key slot information
+- **`generate_openpgp_key`** - Generate RSA key pairs directly on the YubiKey for email signing and encryption
+- **`set_openpgp_touch_policy`** - Require physical touch for signature, encryption, or authentication operations
+- **`set_openpgp_pin_retries`** - Configure how many incorrect PIN attempts are allowed before lockout
 
 ### Example Usage
 
-After configuring your AI assistant, you can ask:
+After configuring your AI assistant, you can have natural conversations about YubiKey operations:
 
+**Example 1: Device Discovery**
 ```
-"Can you list my connected YubiKeys?"
+You: "Can you list my connected YubiKeys?"
+
+AI: Found 1 YubiKey(s):
+    - YubiKey 5 NFC (5.2.7) [OTP+FIDO+CCID] Serial: 16021303
 ```
 
-The AI will use the MCP server to execute the command and respond with:
-```json
-{
-  "status": "success",
-  "message": "Found 1 YubiKey(s)",
-  "devices": [
-    "YubiKey 5 NFC (5.2.7) [OTP+FIDO+CCID] Serial: 16021303"
-  ]
-}
+**Example 2: Configure Applications**
+```
+You: "I want to enable OATH and PIV over NFC on my YubiKey"
+
+AI: Successfully enabled OATH, PIV over NFC on YubiKey (Serial: 16021303)
+```
+
+**Example 3: OpenPGP Key Generation**
+```
+You: "Generate an OpenPGP key for john@example.com with name John Doe"
+
+AI: Successfully generated rsa2048 OpenPGP key pair for John Doe <john@example.com>
+    Key generation took 87 seconds. Your private keys never left the YubiKey!
+```
+
+**Example 4: Security Hardening**
+```
+You: "Require touch for all OpenPGP signing operations"
+
+AI: Successfully set touch policy for SIG key to 'on'. You'll now need to
+    physically touch your YubiKey every time you sign an email or file.
 ```
 
 ---
@@ -264,30 +294,42 @@ else:
 
 ## Roadmap & Future Tools
 
-### 1. Identity & Authentication
+### ✅ Already Implemented
+- **Device Management**: List devices, get detailed info, configure applications
+- **OpenPGP Operations**: Key generation, touch policies, PIN configuration
+- **Multi-Device Support**: Automatic device selection prompts when multiple YubiKeys are connected
+
+### 🚧 In Development
+These workflow-oriented tools are planned for future releases:
+
+#### 1. PIV (Smart Card & Document Security)
+- `sign_document` - Sign PDFs, contracts, reports with PIV certificates
+- `encrypt_document` - Hardware-backed document encryption
+- `verify_document_signature` - Verify document authenticity
+- `generate_piv_certificate` - Create X.509 certificates for identity
 - `authenticate_to_service` - Use PIV for API authentication
-- `generate_attestation_certificate` - Create identity certificates
-- `verify_identity_proof` - Cryptographic identity verification
 
-### 2. Document Security
-- `sign_document` - Sign PDFs, contracts, reports
-- `encrypt_document` - Hardware-backed encryption
-- `verify_document_signature` - Verify authenticity
+#### 2. OATH (Two-Factor Authentication)
+- `generate_otp_for_service` - Get TOTP/HOTP codes for specific services
+- `setup_totp_account` - Add new 2FA accounts to YubiKey
+- `list_oath_accounts` - View all stored OATH credentials
+- `backup_oath_credentials` - Secure backup of TOTP secrets
 
-### 3. Two-Factor Operations (OATH)
-- `generate_otp_for_service` - Get TOTP/HOTP codes
-- `setup_totp_account` - Add new 2FA accounts
-- `backup_oath_credentials` - Secure backup
+#### 3. FIDO2/WebAuthn
+- `register_fido2_credential` - Register passwordless login for websites
+- `list_fido2_credentials` - View registered FIDO2 credentials
+- `delete_fido2_credential` - Remove specific credentials
 
-### 4. Agent-to-Agent Security
-- `sign_message` - Cryptographically sign AI messages
-- `encrypt_agent_communication` - Secure agent channels
+#### 4. Agent-to-Agent Security
+- `sign_message` - Cryptographically sign AI agent messages
+- `verify_agent_signature` - Verify signatures from other agents
+- `encrypt_agent_communication` - Secure agent-to-agent channels
 - `establish_secure_channel` - Set up trusted connections
 
-### 5. Credential Management
-- `provision_new_credential` - Create new certificates/keys
-- `rotate_expiring_credentials` - Automated cert rotation
-- `audit_credential_usage` - Compliance tracking
+#### 5. Enterprise & Compliance
+- `audit_credential_usage` - Track all cryptographic operations
+- `rotate_expiring_credentials` - Automated certificate rotation
+- `generate_attestation` - Prove operations happened on genuine YubiKey hardware
 
 ---
 
