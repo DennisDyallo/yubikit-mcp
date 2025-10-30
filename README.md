@@ -221,6 +221,63 @@ AI: Successfully set touch policy for SIG key to 'on'. You'll now need to
     physically touch your YubiKey every time you sign an email or file.
 ```
 
+**Example 5: Complete Workflow - Encrypt Grandma's Secret Cookie Recipe** 🍪
+```
+You: "Encrypt grandma's secret cookie recipe"
+
+AI: Let me help you encrypt that precious family recipe! First, let me check
+    your YubiKey setup...
+
+    ✓ Found YubiKey 5 NFC (Serial: 16021303)
+    ✓ Checking OpenPGP application status...
+
+    Hmm, I don't see an OpenPGP key on your YubiKey yet. Would you like me to
+    generate one? This will create a hardware-backed encryption key that never
+    leaves your YubiKey.
+
+You: "Yes, generate one for me"
+
+AI: Perfect! I'll generate a key for you. What's your name and email?
+
+You: "Jane Doe, jane@familyrecipes.com"
+
+AI: Great! Generating RSA-2048 key pair on your YubiKey...
+
+    ⚠️  This will take about 90 seconds. Please don't remove your YubiKey!
+
+    🔑 Key generation in progress...
+    💡 You may need to touch your YubiKey if prompted...
+
+    ✅ Success! Generated OpenPGP key for Jane Doe <jane@familyrecipes.com>
+
+    Now encrypting "grandmas-secret-cookies.txt" to your public key...
+
+    ✓ File encrypted → grandmas-secret-cookies.txt.gpg
+
+    🎉 Your recipe is now protected by military-grade hardware encryption!
+    Only your YubiKey can decrypt it. Even if someone steals your computer,
+    they can't read it without physically having your YubiKey.
+
+    Want me to test decryption to make sure it works?
+
+You: "Yes, decrypt it!"
+
+AI: Decrypting with your YubiKey...
+
+    👆 Please touch your YubiKey to authorize decryption...
+
+    ✅ Decrypted successfully! Here's the secret:
+
+    "Grandma's Chocolate Chip Cookies 🍪
+     - 2 cups butter (must be room temperature!)
+     - 1 cup love
+     - 3 cups chocolate chips (Grandma always adds extra)
+     - SECRET INGREDIENT: A pinch of cinnamon ✨"
+
+    Your recipe is safe! The encrypted file can only be opened with your
+    YubiKey, even if you store it in the cloud or email it to yourself.
+```
+
 ---
 
 ## Project Structure
